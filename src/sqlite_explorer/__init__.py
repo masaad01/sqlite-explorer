@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """SQLite database explorer with metadata display and table pagination."""
 
 import argparse
@@ -222,7 +221,3 @@ Examples:
             show_metadata(conn, args.db)
     finally:
         conn.close()
-
-
-if __name__ == '__main__':
-    main()

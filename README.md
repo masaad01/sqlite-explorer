@@ -9,24 +9,44 @@ A lightweight CLI tool for exploring SQLite databases.
 - Filter columns
 - Export to CSV
 
+## Installation
+
+### From GitHub (requires pipx)
+
+```bash
+pipx install git+https://github.com/masaad01/sqlite-explorer.git
+```
+
+### From source
+
+```bash
+pip install git+https://github.com/masaad01/sqlite-explorer.git
+```
+
+### Development
+
+```bash
+pip install -e .
+```
+
 ## Usage
 
 ```bash
 # Show database metadata (schema, tables, row counts)
-./sqlite_explorer.py database.db
+sqlite-explorer database.db
 
 # Browse a table (default: 100 rows starting at 0)
-./sqlite_explorer.py database.db --table users
+sqlite-explorer database.db --table users
 
 # Customize pagination
-./sqlite_explorer.py database.db -t users --limit 50 --offset 100
+sqlite-explorer database.db -t users --limit 50 --offset 100
 
 # Filter columns
-./sqlite_explorer.py database.db -t users --cols id,name,email
+sqlite-explorer database.db -t users --cols id,name,email
 
 # Export to CSV
-./sqlite_explorer.py database.db -t users --csv > users.csv
-./sqlite_explorer.py database.db -t users --cols id,name --csv > filtered.csv
+sqlite-explorer database.db -t users --csv > users.csv
+sqlite-explorer database.db -t users --cols id,name --csv > filtered.csv
 ```
 
 ## Options
