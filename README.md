@@ -35,6 +35,9 @@ pip install -e .
 # Show database metadata (schema, tables, row counts)
 sqlite-explorer database.db
 
+# Show raw CREATE statements
+sqlite-explorer database.db --schema
+
 # Browse a table (default: 100 rows starting at 0)
 sqlite-explorer database.db --table users
 
@@ -59,6 +62,7 @@ sqlite-explorer database.db -t users --cols id,name --csv > filtered.csv
 | `--limit` | Rows per page | 100 |
 | `--cols` | Filter columns (comma-separated) | All |
 | `--csv` | Output as CSV | False |
+| `--schema` | Show raw CREATE statements | False |
 
 ## Requirements
 

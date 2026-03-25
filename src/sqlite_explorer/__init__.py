@@ -3,9 +3,29 @@
 import argparse
 import csv
 import os
+import re
 import sqlite3
 import sys
 from typing import Optional
+
+
+def parse_column_defs(schema: str) -> list[tuple[str, str, bool]]:
+    """Parse column definitions from a CREATE TABLE statement."""
+    match = re.search(r'\((.+)\)', schema, re.DOTALL)
+    if not match:
+        return []
+    
+    cols = []
+    for line in match.group(1).split(','):
+        line = line.strip()
+        if line.upper().startswith('PRIMARY KEY') or line.upper().startswith('UNIQUE') or line.upper().startswith('CHECK') or line.upper().startswith('FOREIGN KEY'):
+            continue
+        col_match = re.match(r'(\w+)\s+(\w+(?:\([^)]+\))?)', line, re.IGNORECASE)
+        if col_match:
+            name, dtype = col_match.groups()
+            is_pk = 'PRIMARY KEY' in line.upper()
+            cols.append((name, dtype.upper(), is_pk))
+    return cols
 
 
 def get_table_info(conn: sqlite3.Connection, table: str) -> list[tuple]:
@@ -48,8 +68,8 @@ def get_all_views(conn: sqlite3.Connection) -> list[str]:
     return [row[0] for row in cursor.fetchall()]
 
 
-def get_schema(conn: sqlite3.Connection) -> str:
-    """Get full database schema."""
+def get_schema_raw(conn: sqlite3.Connection) -> str:
+    """Get full database schema as raw CREATE statements."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name"
@@ -59,6 +79,42 @@ def get_schema(conn: sqlite3.Connection) -> str:
         if row[0]:
             lines.append(row[0])
     return '\n\n'.join(lines)
+
+
+def parse_view_columns(sql: str) -> list[tuple[str, str]]:
+    """Extract column names from a CREATE VIEW AS SELECT statement."""
+    match = re.search(r'AS\s+SELECT\s+(.+?)\s+FROM', sql, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return []
+    select_part = match.group(1)
+    cols = []
+    for col in select_part.split(','):
+        col = col.strip()
+        if ' AS ' in col.upper():
+            col = re.split(r'\s+AS\s+', col, flags=re.IGNORECASE)[1].strip()
+        cols.append((col.split('.')[-1].strip(), 'TEXT'))
+    return cols
+
+
+def get_schema_info(conn: sqlite3.Connection) -> tuple[list[dict], list[dict]]:
+    """Get schema info as structured data for tree display."""
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT name, sql, type FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name"
+    )
+    
+    tables = []
+    views = []
+    
+    for name, sql, obj_type in cursor.fetchall():
+        if obj_type == 'table':
+            cols = parse_column_defs(sql)
+            tables.append({'name': name, 'columns': cols, 'sql': sql})
+        else:
+            cols = parse_view_columns(sql)
+            views.append({'name': name, 'columns': cols, 'sql': sql})
+    
+    return tables, views
 
 
 def format_ascii_table(headers: list[str], rows: list[tuple], offsets: Optional[list[int]] = None) -> str:
@@ -103,29 +159,52 @@ def output_csv(headers: list[str], rows: list[tuple], offsets: Optional[list[int
         writer.writerow(values)
 
 
-def show_metadata(conn: sqlite3.Connection, db_path: str):
-    """Show database metadata: schema and tables."""
+def format_schema_tree(conn: sqlite3.Connection, db_path: str):
+    """Show database metadata in tree format."""
+    size = os.path.getsize(db_path)
+    print(f"{db_path} ({size:,} bytes)\n")
+    
+    tables, views = get_schema_info(conn)
+    
+    for i, table in enumerate(tables):
+        prefix = "" if i == 0 else "\n"
+        row_count = get_row_count(conn, table['name'])
+        n = len(table['columns'])
+        plural = "" if n == 1 else "s"
+        print(f"{prefix}{table['name']} ({row_count:,} row{'s' if row_count != 1 else ''}, {n} col{plural})")
+        
+        for j, (col_name, col_type, is_pk) in enumerate(table['columns']):
+            if j == len(table['columns']) - 1:
+                sep = "└──"
+            else:
+                sep = "├──"
+            pk_suffix = " PRIMARY KEY" if is_pk else ""
+            print(f"    {sep} {col_name} {col_type}{pk_suffix}")
+    
+    if views:
+        start = "\n" if tables else ""
+        print(f"{start}views:")
+        for i, view in enumerate(views):
+            prefix = "" if i == 0 else "\n"
+            print(f"{prefix}{view['name']}")
+            for j, (col_name, col_type) in enumerate(view['columns']):
+                if j == len(view['columns']) - 1:
+                    sep = "└──"
+                else:
+                    sep = "├──"
+                print(f"    {sep} {col_name} {col_type}")
+
+
+def show_metadata_raw(conn: sqlite3.Connection, db_path: str):
+    """Show database schema as raw CREATE statements."""
     print(f"Database: {db_path}")
     print(f"Size: {os.path.getsize(db_path):,} bytes\n")
-
-    schema = get_schema(conn)
+    
+    schema = get_schema_raw(conn)
     if schema:
-        print("=== Schema ===")
+        print("Schema")
+        print("──────")
         print(schema)
-        print()
-
-    tables = get_all_tables(conn)
-    if tables:
-        print("=== Tables ===")
-        table_data = [(name, count) for name, count in tables]
-        print(format_ascii_table(['table', 'rows'], table_data))
-        print()
-
-    views = get_all_views(conn)
-    if views:
-        print("=== Views ===")
-        for v in views:
-            print(f"  {v}")
 
 
 def explore_table(
@@ -190,6 +269,7 @@ Examples:
     parser.add_argument('--limit', type=int, default=100, help='Rows per page (default: 100)')
     parser.add_argument('--cols', help='Filter columns (comma-separated)')
     parser.add_argument('--csv', action='store_true', help='Output as CSV')
+    parser.add_argument('--schema', action='store_true', help='Show raw CREATE statements')
 
     args = parser.parse_args()
 
@@ -218,6 +298,9 @@ Examples:
 
             explore_table(conn, args.table, args.offset, args.limit, cols, args.csv)
         else:
-            show_metadata(conn, args.db)
+            if args.schema:
+                show_metadata_raw(conn, args.db)
+            else:
+                format_schema_tree(conn, args.db)
     finally:
         conn.close()
